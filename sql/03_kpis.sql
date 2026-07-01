@@ -2,6 +2,8 @@
 -- 03_kpis.sql
 -- Dashboard KPI queries. Read-only -- run AFTER student_dim
 -- and student_events have been rebuilt.
+--
+-- AY 2025-2026 = Fall 2025 + Spring 2026 + Summer 2026
 -- ============================================================
 
 -- ============================================================
@@ -11,14 +13,8 @@
 -- e.g. today = 2026-06-30 -> AY year = 2025 -> terms: '2025 Fall', '2026 Spring', '2026 Summer'
 --      today = 2026-09-15 -> AY year = 2026 -> terms: '2026 Fall', '2027 Spring', '2027 Summer'
 -- ============================================================
-
--- -----------------------------------------------
--- KPI 1: Total Harvard members for the current AY
--- "Member this AY" = their LAST (most recent) term is in the current AY.
--- This naturally includes both new joiners and returning students who are still active this AY,
--- and excludes anyone whose last term was before this AY (i.e. they've left/lapsed).
 WITH ay AS (
-  SELECT CASE WHEN EXTRACT(MONTH FROM CURRENT_DATE) >= 8
+  SELECT CASE WHEN EXTRACT(MONTH FROM CURRENT_DATE) >= 9
               THEN EXTRACT(YEAR FROM CURRENT_DATE)::int
               ELSE EXTRACT(YEAR FROM CURRENT_DATE)::int - 1
          END AS ay_year
@@ -31,16 +27,20 @@ ay_terms AS (
          ]) AS term
   FROM ay
 )
+
+-- KPI 1: Total Harvard members for the current AY
+-- "Member this AY" = their LAST (most recent) term is in the current AY.
+-- This naturally includes both new joiners and returning students who are still active this AY,
+-- and excludes anyone whose last term was before this AY (i.e. they've left/lapsed).
 SELECT
     COUNT(DISTINCT contact_id) AS total_ay_members
 FROM student_dim
 WHERE school_1 ILIKE 'Harvard %'
   AND last_term IN (SELECT term FROM ay_terms);
 
--- -----------------------------------------------
 -- KPI 1b: Same, broken out by last_term (sanity check / composition view)
 WITH ay AS (
-  SELECT CASE WHEN EXTRACT(MONTH FROM CURRENT_DATE) >= 8
+  SELECT CASE WHEN EXTRACT(MONTH FROM CURRENT_DATE) >= 9
               THEN EXTRACT(YEAR FROM CURRENT_DATE)::int
               ELSE EXTRACT(YEAR FROM CURRENT_DATE)::int - 1
          END AS ay_year
@@ -62,11 +62,10 @@ WHERE school_1 ILIKE 'Harvard %'
 GROUP BY 1
 ORDER BY last_term;
 
--- -----------------------------------------------
 -- KPI 1c: NEW members this AY (their first-ever term ALSO falls in this AY,
 -- i.e. they joined and are still active -- not returning from a prior AY)
 WITH ay AS (
-  SELECT CASE WHEN EXTRACT(MONTH FROM CURRENT_DATE) >= 8
+  SELECT CASE WHEN EXTRACT(MONTH FROM CURRENT_DATE) >= 9
               THEN EXTRACT(YEAR FROM CURRENT_DATE)::int
               ELSE EXTRACT(YEAR FROM CURRENT_DATE)::int - 1
          END AS ay_year
@@ -86,11 +85,11 @@ WHERE school_1 ILIKE 'Harvard %'
   AND last_term IN (SELECT term FROM ay_terms)
   AND first_term IN (SELECT term FROM ay_terms);
 
-
--- KPI 1d: NEW members by month joined, for a trend line (their first-ever term
--- falls in this AY, grouped by the month they actually joined)
+-- KPI 1d: NEW members by month joined, with running cumulative total.
+-- "New member" = first_term AND last_term both fall in this AY (joined fresh
+-- this year, hasn't left). Grouped by the month they actually joined.
 WITH ay AS (
-  SELECT CASE WHEN EXTRACT(MONTH FROM CURRENT_DATE) >= 8
+  SELECT CASE WHEN EXTRACT(MONTH FROM CURRENT_DATE) >= 9
               THEN EXTRACT(YEAR FROM CURRENT_DATE)::int
               ELSE EXTRACT(YEAR FROM CURRENT_DATE)::int - 1
          END AS ay_year
@@ -102,15 +101,23 @@ ay_terms AS (
            (ay_year + 1) || ' Summer'
          ]) AS term
   FROM ay
+),
+monthly AS (
+  SELECT
+      DATE_TRUNC('month', join_date) AS month,
+      COUNT(DISTINCT contact_id) AS new_members
+  FROM student_dim
+  WHERE school_1 ILIKE 'Harvard %'
+    AND first_term IN (SELECT term FROM ay_terms)
+    AND last_term IN (SELECT term FROM ay_terms)
+  GROUP BY 1
 )
 SELECT
-    DATE_TRUNC('month', join_date) AS month,
-    COUNT(DISTINCT contact_id) AS new_members
-FROM student_dim
-WHERE school_1 ILIKE 'Harvard %'
-  AND last_term IN (SELECT term FROM ay_terms)
-GROUP BY 1
-ORDER BY 1;
+    month,
+    new_members,
+    SUM(new_members) OVER (ORDER BY month) AS cumulative_members
+FROM monthly
+ORDER BY month;
 
 -- KPI 2: Monthly Active Members (MAU) -- distinct Harvard students w/ any event that month
 SELECT
@@ -132,24 +139,8 @@ WHERE se.event_at >= now() - INTERVAL '30 days'
   AND s.school_1 ILIKE 'Harvard %';
 
 -- KPI 3: New member activation rate -- joined last month, had an event within 30 days of join_date
-WITH ay AS (
-  SELECT CASE WHEN EXTRACT(MONTH FROM CURRENT_DATE) >= 8
-              THEN EXTRACT(YEAR FROM CURRENT_DATE)::int
-              ELSE EXTRACT(YEAR FROM CURRENT_DATE)::int - 1
-         END AS ay_year
-),
-ay_terms AS (
-  SELECT unnest(ARRAY[
-           ay_year || ' Fall',
-           (ay_year + 1) || ' Spring',
-           (ay_year + 1) || ' Summer'
-         ]) AS term
-  FROM ay
-)
 SELECT
     DATE_TRUNC('month', s.join_date) AS cohort_month,
-    min(se.event_at) as min_event_at,
-    max(se.event_at) as max_event_at,
     COUNT(DISTINCT s.contact_id) AS new_members,
     COUNT(DISTINCT se.student_id) AS activated,
     ROUND(COUNT(DISTINCT se.student_id)::numeric / COUNT(DISTINCT s.contact_id), 3) AS activation_rate
@@ -158,6 +149,6 @@ LEFT JOIN student_events se
     ON se.student_id = s.contact_id
    AND se.event_at BETWEEN s.join_date AND s.join_date + INTERVAL '30 days'
 WHERE s.school_1 ILIKE 'Harvard %'
-  AND last_term IN (SELECT term FROM ay_terms)
+  AND s.join_date >= '2025-08-01'
 GROUP BY 1
 ORDER BY 1;
