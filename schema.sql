@@ -145,3 +145,64 @@ CREATE INDEX IF NOT EXISTS idx_student_dim_secondary_email  ON student_dim (seco
 CREATE INDEX IF NOT EXISTS idx_event_attendees_email ON event_attendees (lower(trim(email)));
 CREATE INDEX IF NOT EXISTS idx_oncehub_bookings_email ON oncehub_bookings (lower(trim(booker_email)));
 CREATE INDEX IF NOT EXISTS idx_airtable_bookings_email ON airtable_bookings (lower(trim(booker_email)));
+
+
+-- all members
+-- =========================================================
+-- all_members table — corrected schema
+-- Based on all_members_all_time.csv (verified column order/content)
+-- =========================================================
+
+CREATE TABLE all_members (
+    contact_id                      VARCHAR(20)   NOT NULL,   -- Salesforce Contact ID, e.g. 003UU00000cLpwA
+    first_name                      VARCHAR(50),
+    last_name                       VARCHAR(50),
+    team_enrollment_team             VARCHAR(150),             -- "Team Enrollment: Team"
+    account_id                      VARCHAR(20),               -- Salesforce Account ID
+    team_enrollment_lab              VARCHAR(50),               -- "Team Enrollment: Lab"
+    team_lead                       BOOLEAN       DEFAULT FALSE,-- was 0/1 int in source; cast to boolean
+    preferred_email                  VARCHAR(100),
+    secondary_email                  VARCHAR(100),
+    permanent_email                  VARCHAR(100),
+    sma_registration_email            VARCHAR(100),
+    harvard_school_affiliation_1       VARCHAR(100),
+    graduation_year                  text,                 -- e.g. 2026 (source was float due to NaNs; store as int)
+    linkedin_profile                 VARCHAR(300),
+    linkedin                        VARCHAR(300),              -- company/team LinkedIn
+    role                            VARCHAR(100),
+    gender                          VARCHAR(30),
+    race_ethnicity                    VARCHAR(50),
+    primary_industry                 VARCHAR(75),
+    secondary_industry                VARCHAR(75),
+    account_description               VARCHAR(2000),
+    team_enrollment_lab_term            VARCHAR(30),             -- "Team Enrollment: Lab Term", e.g. "2024 Fall", "2024-25 Academic Year"
+    -- PRIMARY KEY (contact_id, team_enrollment_lab_term) -- failed due to bad data and duplicate enrollments 
+    -- composite key because a contact can have multiple enrollment/term rows;
+    -- if you only ever want one row per contact, use a surrogate key instead:
+    --   row_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY
+);
+
+-- Helpful indexes for common lookups
+CREATE INDEX idx_all_members_contact_id ON all_members (contact_id);
+CREATE INDEX idx_all_members_affiliation ON all_members (harvard_school_affiliation_1);
+CREATE INDEX idx_all_members_lab_term ON all_members (team_enrollment_lab_term);
+CREATE INDEX idx_all_members_preferred_email ON all_members (preferred_email);
+
+-- =========================================================
+-- Import (adjust to your database engine)
+-- =========================================================
+
+-- Postgres example:
+-- \copy all_members FROM '/path/to/all_members_all_time.csv' WITH (FORMAT csv, HEADER true, NULL '');
+
+-- MySQL example:
+-- LOAD DATA LOCAL INFILE '/path/to/all_members_all_time.csv'
+-- INTO TABLE all_members
+-- FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"'
+-- LINES TERMINATED BY '\n'
+-- IGNORE 1 ROWS;
+
+-- Snowflake example:
+-- COPY INTO all_members
+-- FROM @my_stage/all_members_all_time.csv
+-- FILE_FORMAT = (TYPE = CSV SKIP_HEADER = 1 FIELD_OPTIONALLY_ENCLOSED_BY='"');
